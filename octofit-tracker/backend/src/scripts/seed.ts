@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import Activity from '../models/Activity';
+import Activity, { Activity as ActivityRecord } from '../models/Activity';
 import Leaderboard from '../models/Leaderboard';
 import Team from '../models/Team';
 import User from '../models/User';
@@ -33,31 +33,37 @@ async function seedDatabase(): Promise<void> {
         email: 'sam.rivera@example.com',
       },
     ];
-
-    const users = await Promise.all(
-      userSeeds.map((user) =>
-        User.findOneAndUpdate(
-          { username: user.username },
-          { $set: user },
-          { new: true, upsert: true, runValidators: true },
-        ),
-      ),
+    const knownUsers = await User.find({
+      username: { $in: userSeeds.map(({ username }) => username) },
+    });
+    const knownUsernames = new Set(knownUsers.map(({ username }) => username));
+    const newUsers = await User.insertMany(
+      userSeeds.filter(({ username }) => !knownUsernames.has(username)),
     );
-    const [alex, jordan, sam] = users;
+    const usersByUsername = new Map(
+      [...knownUsers, ...newUsers].map((user) => [user.username, user]),
+    );
+    const getUser = (username: string) => {
+      const user = usersByUsername.get(username);
+      if (!user) {
+        throw new Error(`Seed user ${username} was not found after insertion`);
+      }
+      return user;
+    };
+    const alex = getUser('alex-runner');
+    const jordan = getUser('jordan-cyclist');
+    const sam = getUser('sam-swimmer');
 
     const teamSeeds = [
       { name: 'Trail Blazers', members: [alex._id, sam._id], points: 420 },
       { name: 'Cadence Crew', members: [jordan._id], points: 365 },
     ];
-
-    await Promise.all(
-      teamSeeds.map((team) =>
-        Team.findOneAndUpdate(
-          { name: team.name },
-          { $set: team },
-          { new: true, upsert: true, runValidators: true },
-        ),
-      ),
+    const existingTeams = await Team.find({
+      name: { $in: teamSeeds.map(({ name }) => name) },
+    }).select('name');
+    const existingTeamNames = new Set(existingTeams.map(({ name }) => name));
+    await Team.insertMany(
+      teamSeeds.filter(({ name }) => !existingTeamNames.has(name)),
     );
 
     const activitySeeds = [
@@ -93,14 +99,22 @@ async function seedDatabase(): Promise<void> {
         recordedAt: new Date('2026-10-12T17:00:00.000Z'),
       },
     ];
-
-    await Promise.all(
-      activitySeeds.map(({ user, type, recordedAt, ...activity }) =>
-        Activity.findOneAndUpdate(
-          { user, type, recordedAt },
-          { $set: { user, type, recordedAt, ...activity } },
-          { new: true, upsert: true, runValidators: true },
-        ),
+    const existingActivities = await Activity.find({
+      user: { $in: activitySeeds.map(({ user }) => user) },
+      type: { $in: activitySeeds.map(({ type }) => type) },
+      recordedAt: { $in: activitySeeds.map(({ recordedAt }) => recordedAt) },
+    }).select('user type recordedAt');
+    const activityKey = (activity: {
+      user: (typeof alex)['_id'];
+      type: ActivityRecord['type'];
+      recordedAt: Date;
+    }) => `${activity.user}:${activity.type}:${activity.recordedAt.toISOString()}`;
+    const existingActivityKeys = new Set(
+      existingActivities.map(activityKey),
+    );
+    await Activity.insertMany(
+      activitySeeds.filter(
+        (activity) => !existingActivityKeys.has(activityKey(activity)),
       ),
     );
 
@@ -109,15 +123,14 @@ async function seedDatabase(): Promise<void> {
       { user: jordan._id, points: 365, rank: 2 },
       { user: sam._id, points: 310, rank: 3 },
     ];
-
-    await Promise.all(
-      leaderboardSeeds.map((entry) =>
-        Leaderboard.findOneAndUpdate(
-          { user: entry.user },
-          { $set: entry },
-          { new: true, upsert: true, runValidators: true },
-        ),
-      ),
+    const existingLeaderboardEntries = await Leaderboard.find({
+      user: { $in: leaderboardSeeds.map(({ user }) => user) },
+    }).select('user');
+    const rankedUserIds = new Set(
+      existingLeaderboardEntries.map(({ user }) => user.toString()),
+    );
+    await Leaderboard.insertMany(
+      leaderboardSeeds.filter(({ user }) => !rankedUserIds.has(user.toString())),
     );
 
     const workoutSeeds = [
@@ -146,15 +159,14 @@ async function seedDatabase(): Promise<void> {
         exercises: ['Bodyweight squats', 'Push-ups', 'Reverse lunges', 'Plank holds'],
       },
     ];
-
-    await Promise.all(
-      workoutSeeds.map((workout) =>
-        Workout.findOneAndUpdate(
-          { title: workout.title },
-          { $set: workout },
-          { new: true, upsert: true, runValidators: true },
-        ),
-      ),
+    const existingWorkouts = await Workout.find({
+      title: { $in: workoutSeeds.map(({ title }) => title) },
+    }).select('title');
+    const existingWorkoutTitles = new Set(
+      existingWorkouts.map(({ title }) => title),
+    );
+    await Workout.insertMany(
+      workoutSeeds.filter(({ title }) => !existingWorkoutTitles.has(title)),
     );
 
     console.log('Seeded users, teams, activities, leaderboard, and workouts');
